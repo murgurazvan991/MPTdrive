@@ -28,8 +28,20 @@ if __name__ == "__main__":
     import os # Needed for the file check in this script
     
     # Replace this with the local IP of your Debian server
-    DEBIAN_IP = "192.168.1.100" 
+    DEBIAN_IP = "127.0.0.1" 
     PORT = 8080
-    FILE_TO_UPLOAD = "test_document.txt" # Replace with a real file on your system
-    
-    upload_file(DEBIAN_IP, PORT, FILE_TO_UPLOAD)
+    FILE_TO_UPLOAD = "/home/razvan/Documents/test.cpp" # Replace with a real file on your system
+
+    print("Press:")
+    print("1) To upload a file")
+    print("2) To download a file")
+    opt = input()
+
+    if (opt == 1):
+        print("Write the path to the file you want to upload")
+        file_path = input
+        upload_file(DEBIAN_IP, file_path)
+    elif (opt == 2):
+        print("Da-i un mesaj la iuli sa termie codu")
+    else:
+        print("Real")
