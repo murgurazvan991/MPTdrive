@@ -2,6 +2,33 @@ import os
 
 BUFFER_SIZE = 8192
 
+
+def send_line(sock, text):
+    """Send a UTF-8 encoded line terminated with '\n'."""
+    if not text.endswith('\n'):
+        text = text + '\n'
+    sock.sendall(text.encode('utf-8'))
+
+
+def recv_line(sock):
+    """Receive bytes until '\n' and return the decoded line without the trailing newline.
+
+    Returns `None` if the connection is closed and no bytes were read.
+    """
+    data = bytearray()
+    last = None
+    while True:
+        b = sock.recv(1)
+        last = b
+        if not b:
+            break
+        if b == b'\n':
+            break
+        data += b
+    if not data and not last:
+        return None
+    return data.decode('utf-8')
+
 def send_file(sock, filepath):
     """Reads a file and sends it over the socket using the custom protocol."""
     filename = os.path.basename(filepath)
