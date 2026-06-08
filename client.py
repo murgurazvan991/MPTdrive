@@ -1,5 +1,7 @@
+import argparse
 import socket
 import os
+from archive_utils import create_tar, safe_extract_tar, is_archive_name
 from protocol import send_file, receive_file, recv_line, send_line
 
 def upload_file(server_ip, port, filepath):
@@ -15,9 +17,22 @@ def upload_file(server_ip, port, filepath):
         client_socket.connect((server_ip, port))
         # tell server we want to upload
         send_line(client_socket, 'UPLOAD')
-        print(f"Uploading '{filepath}'...")
-        send_file(client_socket, filepath)
-        
+
+        # If the path is a directory, create a tar.gz and send that
+        if os.path.isdir(filepath):
+            tmp_name = create_tar(filepath)
+            print(f"Uploading directory '{filepath}' as archive {tmp_name}...")
+            try:
+                send_file(client_socket, tmp_name)
+            finally:
+                try:
+                    os.remove(tmp_name)
+                except Exception:
+                    pass
+        else:
+            print(f"Uploading '{filepath}'...")
+            send_file(client_socket, filepath)
+
         print("Upload complete!")
     except ConnectionRefusedError:
         print("Error: Could not connect to the server. Is it running?")
@@ -25,120 +40,191 @@ def upload_file(server_ip, port, filepath):
         print(f"An error occurred: {e}")
     finally:
         client_socket.close()
+def navigate_and_download(server_ip, port, save_dir):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.connect((server_ip, port))
+        send_line(sock, 'NAV')
+
+        while True:
+            listing = recv_line(sock)
+            if listing is None:
+                print('Connection closed by server')
+                break
+
+            items = [] if listing.strip() == '' else listing.strip().split('::')
+            print('\nRemote directory:')
+            for i, it in enumerate(items, start=1):
+                print(f"{i}) {it}")
+            print('\nOptions:')
+            print("Enter number to navigate into a directory or download a file")
+            print("Prefix with 'd' to download by number (e.g. d3), 't' to download a directory as tar (e.g. t2), 'u /local/path' to upload a local file/dir into current remote directory, 'save /path' to change local download directory, 'b' to go back, 'q' to quit")
+
+            choice = input('> ').strip()
+
+            # change local save directory
+            if choice.startswith('save ') or choice.startswith('sd '):
+                parts = choice.split(None, 1)
+                if len(parts) < 2:
+                    print('Usage: save /path/to/save')
+                    continue
+                new_dir = parts[1]
+                try:
+                    os.makedirs(new_dir, exist_ok=True)
+                    save_dir = new_dir
+                    print(f'Download directory set to: {save_dir}')
+                except Exception as e:
+                    print('Could not set save directory:', e)
+                continue
+
+            # upload into current remote dir
+            if choice.startswith('u ') or choice.startswith('upload '):
+                parts = choice.split(None, 1)
+                if len(parts) < 2:
+                    print('Usage: u /path/to/local/file_or_dir')
+                    continue
+                local_path = parts[1]
+                if not os.path.exists(local_path):
+                    print('Local path does not exist')
+                    continue
+                if os.path.isdir(local_path):
+                    send_path = create_tar(local_path)
+                    remove_after = True
+                else:
+                    send_path = local_path
+                    remove_after = False
+
+                try:
+                    send_line(sock, 'UPLOAD_HERE')
+                    send_file(sock, send_path)
+                    print('Upload sent')
+                except Exception as e:
+                    print('Upload failed:', e)
+                finally:
+                    if remove_after:
+                        try:
+                            os.remove(send_path)
+                        except Exception:
+                            pass
+                continue
+
+            if choice == 'q':
+                send_line(sock, 'QUIT')
+                break
+            if choice == 'b':
+                send_line(sock, 'BACK')
+                continue
+
+            if choice.startswith('d'):
+                try:
+                    idx = int(choice[1:]) - 1
+                except Exception:
+                    print('Invalid selection')
+                    continue
+                if idx < 0 or idx >= len(items):
+                    print('Index out of range')
+                    continue
+                name = items[idx]
+                if name.endswith('/'):
+                    print('Selected item is a directory; cannot download. Enter it instead.')
+                    continue
+                send_line(sock, f'GET:{name}')
+                saved = receive_file(sock, save_dir)
+                if saved:
+                    if saved.endswith(('.tar.gz', '.tgz', '.tar')):
+                        try:
+                            safe_extract_tar(saved, save_dir)
+                            os.remove(saved)
+                            print('Archive downloaded and extracted')
+                        except Exception as e:
+                            print('Extraction failed:', e)
+                    else:
+                        print(f'Download complete: {saved}')
+                else:
+                    print('Download failed')
+                continue
+
+            if choice.startswith('t'):
+                try:
+                    idx = int(choice[1:]) - 1
+                except Exception:
+                    print('Invalid selection')
+                    continue
+                if idx < 0 or idx >= len(items):
+                    print('Index out of range')
+                    continue
+                name = items[idx]
+                if not name.endswith('/'):
+                    print('Selected item is not a directory')
+                    continue
+                name = name[:-1]
+                send_line(sock, f'TAR:{name}')
+                saved = receive_file(sock, save_dir)
+                if saved:
+                    try:
+                        safe_extract_tar(saved, save_dir)
+                        os.remove(saved)
+                        print('Directory downloaded and extracted')
+                    except Exception as e:
+                        print('Extraction failed:', e)
+                else:
+                    print('Tar download failed')
+                continue
+
+            try:
+                idx = int(choice) - 1
+            except Exception:
+                print('Invalid input')
+                continue
+            if idx < 0 or idx >= len(items):
+                print('Index out of range')
+                continue
+            sel = items[idx]
+            if sel.endswith('/'):
+                name = sel[:-1]
+                send_line(sock, f'ENTER:{name}')
+                continue
+            else:
+                yn = input(f"Download '{sel}'? [y/N] ").strip().lower()
+                if yn == 'y':
+                    send_line(sock, f'GET:{sel}')
+                    saved = receive_file(sock, save_dir)
+                    if saved:
+                        if saved.endswith(('.tar.gz', '.tgz', '.tar')):
+                            try:
+                                safe_extract_tar(saved, save_dir)
+                                os.remove(saved)
+                                print('Archive downloaded and extracted')
+                            except Exception as e:
+                                print('Extraction failed:', e)
+                        else:
+                            print(f'Download complete: {saved}')
+                    else:
+                        print('Download failed')
+                else:
+                    print('Skipped')
+
+    except ConnectionRefusedError:
+        print('Could not connect to server')
+    finally:
+        sock.close()
+
 
 if __name__ == "__main__":
-    import os # Needed for the file check in this script
-    
-    # Replace this with the local IP of your Debian server
-    DEBIAN_IP = "127.0.0.1" 
-    PORT = 8080
-    FILE_TO_UPLOAD = "/home/razvan/Documents/test.cpp" # Replace with a real file on your system
+    parser = argparse.ArgumentParser(prog='client.py', description='MPTdrive client — NAV UI')
+    parser.add_argument('--server', '-S', default='127.0.0.1', help='Server IP (default: 127.0.0.1)')
+    parser.add_argument('--port', '-p', type=int, default=8080, help='Server port (default: 8080)')
+    parser.add_argument('--save-dir', '-s', default=os.getcwd(), help='Local directory to save downloads (default: current working directory)')
+    args = parser.parse_args()
 
-    print("Press:")
-    print("1) To upload a file")
-    print("2) To download a file")
-    opt = input()
-
-    if (opt == "1"):
-        print("Write the path to the file you want to upload")
-        file_path = input()
-        upload_file(DEBIAN_IP, PORT, file_path)
-    elif (opt == "2"):
-        # Launch interactive navigation + download session
-        # use recv_line from protocol
-        def navigate_and_download(server_ip, port, save_dir):
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                sock.connect((server_ip, port))
-                # start navigation session
-                send_line(sock, 'NAV')
-
-                while True:
-                    listing = recv_line(sock)
-                    if listing is None:
-                        print('Connection closed by server')
-                        break
-
-                    # If the server sends file metadata (contains '|'), delegate to receive_file
-                    if '|' in listing:
-                        # turn the previously-read line back into a stream for receive_file is complex;
-                        # our server sends metadata only when client asked for GET, so we shouldn't reach here.
-                        pass
-
-                    items = [] if listing.strip() == '' else listing.strip().split('::')
-                    print('\nRemote directory:')
-                    for i, it in enumerate(items, start=1):
-                        print(f"{i}) {it}")
-                    print('\nOptions:')
-                    print("Enter number to navigate into a directory or download a file")
-                    print("Prefix with 'd' to download by number (e.g. d3), 'b' to go back, 'q' to quit")
-
-                    choice = input('> ').strip()
-                    if choice == 'q':
-                        send_line(sock, 'QUIT')
-                        break
-                    if choice == 'b':
-                        send_line(sock, 'BACK')
-                        continue
-                    if choice.startswith('d'):
-                        # download
-                        try:
-                            idx = int(choice[1:]) - 1
-                        except Exception:
-                            print('Invalid selection')
-                            continue
-                        if idx < 0 or idx >= len(items):
-                            print('Index out of range')
-                            continue
-                        name = items[idx]
-                        if name.endswith('/'):
-                            print('Selected item is a directory; cannot download. Enter it instead.')
-                            continue
-                        # request file
-                        send_line(sock, f'GET:{name}')
-                        # use protocol.receive_file to accept the incoming file and save into save_dir
-                        if receive_file(sock, save_dir):
-                            print('Download complete')
-                        else:
-                            print('Download failed')
-                        # after download continue navigation
-                        continue
-
-                    # plain number: navigate into directory or download if it's a file
-                    try:
-                        idx = int(choice) - 1
-                    except Exception:
-                        print('Invalid input')
-                        continue
-                    if idx < 0 or idx >= len(items):
-                        print('Index out of range')
-                        continue
-                    sel = items[idx]
-                    if sel.endswith('/'):
-                        # enter directory (strip trailing slash)
-                        name = sel[:-1]
-                        send_line(sock, f'ENTER:{name}')
-                        continue
-                    else:
-                        # file selected — ask whether to download
-                        yn = input(f"Download '{sel}'? [y/N] ").strip().lower()
-                        if yn == 'y':
-                            send_line(sock, f'GET:{sel}')
-                            if receive_file(sock, save_dir):
-                                print('Download complete')
-                            else:
-                                print('Download failed')
-                        else:
-                            print('Skipped')
-
-            except ConnectionRefusedError:
-                print('Could not connect to server')
-            finally:
-                sock.close()
-
-        # Ask where to save
+    DEBIAN_IP = args.server
+    PORT = args.port
+    save_dir = args.save_dir
+    try:
+        os.makedirs(save_dir, exist_ok=True)
+    except Exception as e:
+        print('Could not create save directory, using cwd instead:', e)
         save_dir = os.getcwd()
-        print(f"Files will be saved to: {save_dir}")
-        navigate_and_download(DEBIAN_IP, PORT, save_dir)
-    else:
-        print("Real")
+
+    print(f"Files will be saved to: {save_dir}")
+    navigate_and_download(DEBIAN_IP, PORT, save_dir)
