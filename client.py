@@ -37,11 +37,11 @@ if __name__ == "__main__":
     print("2) To download a file")
     opt = input()
 
-    if (opt == 1):
+    if (opt == "1"):
         print("Write the path to the file you want to upload")
-        file_path = input
-        upload_file(DEBIAN_IP, file_path)
-    elif (opt == 2):
+        file_path = input()
+        upload_file(DEBIAN_IP, PORT, file_path)
+    elif (opt == "2"):
         print("Da-i un mesaj la iuli sa termie codu")
     else:
         print("Real")

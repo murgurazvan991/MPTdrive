@@ -3,7 +3,7 @@ import os
 from protocol import receive_file
 
 # Define where files should be saved on the Debian machine
-SAVE_DIR = "/home/razvan/nuj/MDS"
+SAVE_DIR = "/home/razvan/facultate/retele/server_files"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 def start_server(host='0.0.0.0', port=8080):

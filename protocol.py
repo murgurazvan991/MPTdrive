@@ -12,13 +12,16 @@ def send_file(sock, filepath):
     # sendall() is crucial in Python TCP; it ensures all bytes are sent
     sock.sendall(metadata.encode('utf-8')) 
 
+    cnt = 1
     # 2. Stream the file data in chunks
     with open(filepath, 'rb') as f:
         while True:
             chunk = f.read(BUFFER_SIZE)
             if not chunk:
                 break # End of file
+            print(f"Sending chunk {cnt} of size {len(chunk)} bytes...")
             sock.sendall(chunk)
+            cnt += 1
 
 def receive_file(sock, save_dir):
     """Reads metadata and file bytes from the socket, saving it to disk."""
