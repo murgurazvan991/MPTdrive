@@ -61,7 +61,7 @@ def receive_file(sock, save_dir):
         metadata_bytes += byte
 
     if not metadata_bytes:
-        return False
+        return None
 
     # Parse the metadata
     metadata = metadata_bytes.decode('utf-8')
@@ -85,4 +85,7 @@ def receive_file(sock, save_dir):
             f.write(chunk)
             bytes_received += len(chunk)
 
-    return True
+    # Return the path on success; return None on failure
+    if bytes_received == filesize:
+        return filepath
+    return None
