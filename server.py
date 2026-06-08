@@ -1,5 +1,6 @@
 import socket
 import os
+from archive_utils import create_tar, safe_extract_tar, is_archive_name
 from protocol import receive_file, send_file, recv_line, send_line
 
 # Define where files should be saved on the Debian machine
@@ -61,6 +62,9 @@ def send_file_tree(path, socket):
     send_line(socket, line)
 
 
+# Archive helpers moved to `archive_utils.py`
+
+
 # recv_line moved to protocol.recv_line for reuse
 
 
@@ -73,8 +77,17 @@ def handle_client(client_socket):
 
     if cmd == 'UPLOAD':
         # Client will send a file with our existing protocol
-        if receive_file(client_socket, SAVE_DIR):
-            print("File upload complete!")
+        saved = receive_file(client_socket, SAVE_DIR)
+        if saved:
+            print(f"Received uploaded file: {saved}")
+            # If it's an archive, try to extract it safely
+            if saved.endswith(('.tar.gz', '.tgz', '.tar')):
+                try:
+                    safe_extract_tar(saved, SAVE_DIR)
+                    os.remove(saved)
+                    print("Archive extracted and removed.")
+                except Exception as e:
+                    print(f"Extraction error: {e}")
         else:
             print("Failed to receive uploaded file.")
         return
@@ -141,6 +154,70 @@ def handle_client(client_socket):
                     # resend listing so client can continue
                     send_file_tree(cur_path, client_socket)
                 # After sending file, continue; client will handle next listing or quit
+                continue
+
+            # TAR:<name> -> create a tar.gz of the named directory (or current dir if name empty) and send it
+            if line.startswith('TAR:'):
+                name = line.split(':', 1)[1]
+                # determine target directory on disk
+                if name == '' or name == '.':
+                    target = os.path.join(SAVE_DIR, cur_path) if cur_path else SAVE_DIR
+                else:
+                    if cur_path == '':
+                        target = os.path.join(SAVE_DIR, name)
+                    else:
+                        target = os.path.join(SAVE_DIR, cur_path, name)
+                target = os.path.normpath(target)
+                if not target.startswith(os.path.abspath(SAVE_DIR)) or not os.path.isdir(target):
+                    # invalid request
+                    send_line(client_socket, '')
+                    send_file_tree(cur_path, client_socket)
+                    continue
+
+                # create a temporary tar.gz (use shared helper)
+                try:
+                    tmp_name = create_tar(target)
+                    send_file(client_socket, tmp_name)
+                except Exception as e:
+                    print(f"Error creating/sending tar: {e}")
+                    send_line(client_socket, '')
+                finally:
+                    try:
+                        if 'tmp_name' in locals():
+                            os.remove(tmp_name)
+                    except Exception:
+                        pass
+                # resend listing
+                send_file_tree(cur_path, client_socket)
+                continue
+
+            # UPLOAD_HERE: client will immediately send a file (metadata+bytes) to be saved into the current directory
+            if line.startswith('UPLOAD_HERE'):
+                # target dir is current path
+                if cur_path == "":
+                    target_dir = SAVE_DIR
+                else:
+                    target_dir = os.path.join(SAVE_DIR, cur_path)
+                target_dir = os.path.normpath(target_dir)
+                if not target_dir.startswith(os.path.abspath(SAVE_DIR)):
+                    send_line(client_socket, '')
+                    send_file_tree(cur_path, client_socket)
+                    continue
+
+                saved = receive_file(client_socket, target_dir)
+                if saved:
+                    print(f"Received upload into {target_dir}: {saved}")
+                    if is_archive_name(saved):
+                        try:
+                            safe_extract_tar(saved, target_dir)
+                            os.remove(saved)
+                            print("Archive extracted and removed.")
+                        except Exception as e:
+                            print(f"Extraction error: {e}")
+                else:
+                    print("Failed to receive uploaded file in NAV session.")
+                # resend listing after upload
+                send_file_tree(cur_path, client_socket)
                 continue
 
             # Unknown command: ignore or break
