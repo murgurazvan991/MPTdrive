@@ -1,0 +1,9 @@
+services:
+  server:
+    build: .
+    container_name: ContainerMPTdrive
+    ports:
+      - "8080:8080"
+    volumes:
+      - /home/MPTsvc/uploads
+    restart: unless-stopped

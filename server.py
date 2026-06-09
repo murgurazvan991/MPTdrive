@@ -3,9 +3,8 @@ import os
 from archive_utils import create_tar, safe_extract_tar, is_archive_name
 from config import KEY
 from protocol import send_file, receive_file, send_encrypted_line, recv_encrypted_line
+from var.SAVE_DIR import SAVE_DIR
 
-# Define where files should be saved on the Debian machine
-SAVE_DIR = "/home/MPTsvc/uploads"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 def start_server(host='0.0.0.0', port=8080):
@@ -29,6 +28,7 @@ def start_server(host='0.0.0.0', port=8080):
         except Exception as e:
             print(f"Connection error: {e}")
         finally:
+            print(f"Closing connection from {addr}")
             client_socket.close()
 
 def send_file_tree(path, socket):
