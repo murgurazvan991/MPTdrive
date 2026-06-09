@@ -5,7 +5,7 @@ from config import KEY
 from protocol import send_file, receive_file, send_encrypted_line, recv_encrypted_line
 
 # Define where files should be saved on the Debian machine
-SAVE_DIR = "/home/july/Desktop"
+SAVE_DIR = "/home/MPTsvc/uploads"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 def start_server(host='0.0.0.0', port=8080):
@@ -78,7 +78,7 @@ def handle_client(client_socket):
 
     if cmd == 'UPLOAD':
         # Client will send a file with our existing protocol
-        saved = receive_file(client_socket, SAVE_DIR)
+        saved = receive_file(client_socket, SAVE_DIR, KEY)
         if saved:
             print(f"Received uploaded file: {saved}")
             # If it's an archive, try to extract it safely
@@ -205,7 +205,7 @@ def handle_client(client_socket):
                     send_file_tree(cur_path, client_socket)
                     continue
 
-                saved = receive_file(client_socket, target_dir)
+                saved = receive_file(client_socket, target_dir, KEY)
                 if saved:
                     print(f"Received upload into {target_dir}: {saved}")
                     if is_archive_name(saved):
