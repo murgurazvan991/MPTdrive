@@ -10,16 +10,12 @@ def upload_file(server_ip, port, filepath):
         print(f"Error: File '{filepath}' does not exist.")
         return
 
-    # Create a TCP/IP socket
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    
     print(f"Connecting to {server_ip}:{port}...")
     try:
         client_socket.connect((server_ip, port))
-        # tell server we want to upload
         send_encrypted_line(client_socket, 'UPLOAD', KEY)
 
-        # If the path is a directory, create a tar.gz and send that
         if os.path.isdir(filepath):
             tmp_name = create_tar(filepath)
             print(f"Uploading directory '{filepath}' as archive {tmp_name}...")
@@ -41,6 +37,7 @@ def upload_file(server_ip, port, filepath):
         print(f"An error occurred: {e}")
     finally:
         client_socket.close()
+
 def navigate_and_download(server_ip, port, save_dir):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -48,7 +45,6 @@ def navigate_and_download(server_ip, port, save_dir):
         send_encrypted_line(sock, 'NAV', KEY)
 
         while True:
-            # OUTER LOOP: Only for fetching listings from the server
             listing = recv_encrypted_line(sock, KEY)
             if listing is None:
                 print('Connection closed by server')
@@ -62,11 +58,9 @@ def navigate_and_download(server_ip, port, save_dir):
             print("Enter number to navigate into a directory or download a file")
             print("Prefix with 'd' to download by number (e.g. d3), 't' to download a directory as tar (e.g. t2), 'u /local/path' to upload a local file/dir into current remote directory, 'save /path' to change local download directory, 'b' to go back, 'q' to quit")
 
-            # INNER LOOP: For handling user input and local commands
             while True:
                 choice = input('> ').strip()
 
-                # 1. LOCAL COMMAND: Change save directory
                 if choice.startswith('save ') or choice.startswith('sd '):
                     parts = choice.split(None, 1)
                     if len(parts) < 2:
@@ -79,9 +73,8 @@ def navigate_and_download(server_ip, port, save_dir):
                         print(f'Download directory set to: {save_dir}')
                     except Exception as e:
                         print('Could not set save directory:', e)
-                    continue # Loops back to input without waiting for server!
+                    continue
 
-                # 2. SERVER COMMAND: Upload
                 if choice.startswith('u ') or choice.startswith('upload '):
                     parts = choice.split(None, 1)
                     if len(parts) < 2:
@@ -111,19 +104,16 @@ def navigate_and_download(server_ip, port, save_dir):
                                 os.remove(send_path)
                             except Exception:
                                 pass
-                    break # Breaks inner loop to fetch new listing from server
+                    break
 
-                # 3. SERVER COMMAND: Quit
                 if choice == 'q':
                     send_encrypted_line(sock, 'QUIT', KEY)
-                    return # Exits the function entirely
+                    return
 
-                # 4. SERVER COMMAND: Back
                 if choice == 'b':
                     send_encrypted_line(sock, 'BACK', KEY)
-                    break # Breaks inner loop
+                    break
 
-                # 5. SERVER COMMAND: Download by prefix
                 if choice.startswith('d'):
                     try:
                         idx = int(choice[1:]) - 1
@@ -151,9 +141,8 @@ def navigate_and_download(server_ip, port, save_dir):
                             print(f'Download complete: {saved}')
                     else:
                         print('Download failed')
-                    break # Breaks inner loop
+                    break
 
-                # 6. SERVER COMMAND: Tar download
                 if choice.startswith('t'):
                     try:
                         idx = int(choice[1:]) - 1
@@ -179,9 +168,8 @@ def navigate_and_download(server_ip, port, save_dir):
                             print('Extraction failed:', e)
                     else:
                         print('Tar download failed')
-                    break # Breaks inner loop
+                    break
 
-                # 7. SERVER COMMAND: Numeric selection (Enter or Download)
                 try:
                     idx = int(choice) - 1
                 except Exception:
@@ -191,11 +179,11 @@ def navigate_and_download(server_ip, port, save_dir):
                     print('Index out of range')
                     continue
                 sel = items[idx]
-                
+
                 if sel.endswith('/'):
                     name = sel[:-1]
                     send_encrypted_line(sock, f'ENTER:{name}', KEY)
-                    break # Breaks inner loop
+                    break
                 else:
                     yn = input(f"Download '{sel}'? [y/N] ").strip().lower()
                     if yn == 'y':
@@ -213,10 +201,10 @@ def navigate_and_download(server_ip, port, save_dir):
                                 print(f'Download complete: {saved}')
                         else:
                             print('Download failed')
-                        break # Breaks inner loop
+                        break
                     else:
                         print('Skipped')
-                        continue # Loops back to input since we skipped!
+                        continue
 
     except ConnectionRefusedError:
         print('Could not connect to server')
