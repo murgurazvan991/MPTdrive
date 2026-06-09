@@ -11,6 +11,15 @@ function App() {
   const [statusMessage, setStatusMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [directoryFiles, setDirectoryFiles] = useState([]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [expandedSections, setExpandedSections] = useState({ files: true, upload: false, directory: false });
+
+  const toggleSection = (section) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }));
+  };
 
   // Function to fetch the list of files from the backend
   const fetchFiles = (path) => {
@@ -61,6 +70,13 @@ function App() {
     const dirName = item.slice(0, -1);
     const downloadPath = currentPath ? `${currentPath}/${dirName}` : dirName;
     window.location.href = `${API_BASE}/download-directory/${downloadPath}`;
+  };
+
+  const handleGoBack = () => {
+    const pathParts = currentPath.split('/');
+    pathParts.pop();
+    const newPath = pathParts.join('/');
+    fetchFiles(newPath);
   };
 
   // Handler for the file input change
@@ -214,17 +230,39 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>MPT Drive</h1>
+        <div className="header-top">
+          <h1>MPT Drive</h1>
+          <button 
+            className="menu-toggle" 
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label="Toggle menu"
+          >
+            ☰
+          </button>
+        </div>
         <p>Current Directory: <code>/{currentPath}</code></p>
       </header>
-      <main>
-        <div className="file-browser">
-          <h2>Files</h2>
+      <main className={menuOpen ? 'menu-open' : ''}>
+        <button 
+          className="section-toggle" 
+          onClick={() => toggleSection('files')}
+        >
+          {expandedSections.files ? '▼ Files' : '▶ Files'}
+        </button>
+        <div className="file-browser" style={{ display: expandedSections.files ? 'block' : 'none' }}>
+          <div className="browser-header">
+            <h2>Files</h2>
+            {currentPath && (
+              <button type="button" className="back-button" onClick={handleGoBack}>
+                ⬆️ Go up
+              </button>
+            )}
+          </div>
           {statusMessage && <p className="status">{statusMessage}</p>}
           <ul>
             {files.map((item, index) => (
               <li key={index}>
-                <span onClick={() => handleItemClick(item)} style={{ cursor: 'pointer' }}>
+                <span onClick={() => handleItemClick(item)} className="file-item">
                   {item.endsWith('/') ? '📁' : '📄'} {item}
                 </span>
                 {item.endsWith('/') && (
@@ -233,7 +271,7 @@ function App() {
                     className="download-dir-button"
                     onClick={() => downloadDirectory(item)}
                   >
-                    Download folder
+                    📦 Download
                   </button>
                 )}
               </li>
@@ -241,14 +279,26 @@ function App() {
             {files.length === 0 && !statusMessage && <li>Directory is empty.</li>}
           </ul>
         </div>
-        <div className="upload-section">
+        <button 
+          className="section-toggle" 
+          onClick={() => toggleSection('upload')}
+        >
+          {expandedSections.upload ? '▼ Upload File' : '▶ Upload File'}
+        </button>
+        <div className="upload-section" style={{ display: expandedSections.upload ? 'block' : 'none' }}>
           <h2>Upload File</h2>
           <form onSubmit={handleUpload}>
             <input id="file-input" type="file" onChange={handleFileChange} />
             <button type="submit">Upload</button>
           </form>
         </div>
-        <div className="upload-section">
+        <button 
+          className="section-toggle" 
+          onClick={() => toggleSection('directory')}
+        >
+          {expandedSections.directory ? '▼ Upload Directory' : '▶ Upload Directory'}
+        </button>
+        <div className="upload-section" style={{ display: expandedSections.directory ? 'block' : 'none' }}>
           <h2>Upload Directory</h2>
           <form onSubmit={handleDirectoryUpload}>
             <input id="dir-input" type="file" webkitdirectory="true" directory="" multiple onChange={handleDirChange} />
