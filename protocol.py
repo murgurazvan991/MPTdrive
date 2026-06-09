@@ -44,9 +44,10 @@ def recv_encrypted_line(sock, key):
         print("Decryption failed! Incorrect key or corrupted data.")
         return None
 
-def send_file(sock, filepath, key):
+def send_file(sock, filepath, key, filename=None):
     """Encrypts and streams a file over the socket on the fly."""
-    filename = os.path.basename(filepath)
+    if filename is None:
+        filename = os.path.basename(filepath)
     filesize = os.path.getsize(filepath)
 
     # 1. Send encrypted metadata (hides the filename and size from network snoopers!)

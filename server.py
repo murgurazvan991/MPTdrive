@@ -205,6 +205,7 @@ def handle_client(client_socket):
                     send_file_tree(cur_path, client_socket)
                     continue
 
+                os.makedirs(target_dir, exist_ok=True)
                 saved = receive_file(client_socket, target_dir, KEY)
                 if saved:
                     print(f"Received upload into {target_dir}: {saved}")
