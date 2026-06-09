@@ -2,7 +2,8 @@ import argparse
 import socket
 import os
 from archive_utils import create_tar, safe_extract_tar, is_archive_name
-from protocol import send_file, receive_file, recv_line, send_line
+from config import KEY
+from protocol import send_file, receive_file, send_encrypted_line, recv_encrypted_line
 
 def upload_file(server_ip, port, filepath):
     if not os.path.exists(filepath):
@@ -16,14 +17,14 @@ def upload_file(server_ip, port, filepath):
     try:
         client_socket.connect((server_ip, port))
         # tell server we want to upload
-        send_line(client_socket, 'UPLOAD')
+        send_encrypted_line(client_socket, 'UPLOAD', KEY)
 
         # If the path is a directory, create a tar.gz and send that
         if os.path.isdir(filepath):
             tmp_name = create_tar(filepath)
             print(f"Uploading directory '{filepath}' as archive {tmp_name}...")
             try:
-                send_file(client_socket, tmp_name)
+                send_file(client_socket, tmp_name, KEY)
             finally:
                 try:
                     os.remove(tmp_name)
@@ -31,7 +32,7 @@ def upload_file(server_ip, port, filepath):
                     pass
         else:
             print(f"Uploading '{filepath}'...")
-            send_file(client_socket, filepath)
+            send_file(client_socket, filepath, KEY)
 
         print("Upload complete!")
     except ConnectionRefusedError:
@@ -44,11 +45,11 @@ def navigate_and_download(server_ip, port, save_dir):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.connect((server_ip, port))
-        send_line(sock, 'NAV')
+        send_encrypted_line(sock, 'NAV', KEY)
 
         while True:
             # OUTER LOOP: Only for fetching listings from the server
-            listing = recv_line(sock)
+            listing = recv_encrypted_line(sock, KEY)
             if listing is None:
                 print('Connection closed by server')
                 break
@@ -99,8 +100,8 @@ def navigate_and_download(server_ip, port, save_dir):
                         remove_after = False
 
                     try:
-                        send_line(sock, 'UPLOAD_HERE')
-                        send_file(sock, send_path)
+                        send_encrypted_line(sock, 'UPLOAD_HERE', KEY)
+                        send_file(sock, send_path, KEY)
                         print('Upload sent')
                     except Exception as e:
                         print('Upload failed:', e)
@@ -114,12 +115,12 @@ def navigate_and_download(server_ip, port, save_dir):
 
                 # 3. SERVER COMMAND: Quit
                 if choice == 'q':
-                    send_line(sock, 'QUIT')
+                    send_encrypted_line(sock, 'QUIT', KEY)
                     return # Exits the function entirely
 
                 # 4. SERVER COMMAND: Back
                 if choice == 'b':
-                    send_line(sock, 'BACK')
+                    send_encrypted_line(sock, 'BACK', KEY)
                     break # Breaks inner loop
 
                 # 5. SERVER COMMAND: Download by prefix
@@ -136,8 +137,8 @@ def navigate_and_download(server_ip, port, save_dir):
                     if name.endswith('/'):
                         print('Selected item is a directory; cannot download. Enter it instead.')
                         continue
-                    send_line(sock, f'GET:{name}')
-                    saved = receive_file(sock, save_dir)
+                    send_encrypted_line(sock, f'GET:{name}', KEY)
+                    saved = receive_file(sock, save_dir, KEY)
                     if saved:
                         if saved.endswith(('.tar.gz', '.tgz', '.tar')):
                             try:
@@ -167,8 +168,8 @@ def navigate_and_download(server_ip, port, save_dir):
                         print('Selected item is not a directory')
                         continue
                     name = name[:-1]
-                    send_line(sock, f'TAR:{name}')
-                    saved = receive_file(sock, save_dir)
+                    send_encrypted_line(sock, f'TAR:{name}', KEY)
+                    saved = receive_file(sock, save_dir, KEY)
                     if saved:
                         try:
                             safe_extract_tar(saved, save_dir)
@@ -193,13 +194,13 @@ def navigate_and_download(server_ip, port, save_dir):
                 
                 if sel.endswith('/'):
                     name = sel[:-1]
-                    send_line(sock, f'ENTER:{name}')
+                    send_encrypted_line(sock, f'ENTER:{name}', KEY)
                     break # Breaks inner loop
                 else:
                     yn = input(f"Download '{sel}'? [y/N] ").strip().lower()
                     if yn == 'y':
-                        send_line(sock, f'GET:{sel}')
-                        saved = receive_file(sock, save_dir)
+                        send_encrypted_line(sock, f'GET:{sel}', KEY)
+                        saved = receive_file(sock, save_dir, KEY)
                         if saved:
                             if saved.endswith(('.tar.gz', '.tgz', '.tar')):
                                 try:

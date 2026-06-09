@@ -1,10 +1,11 @@
 import socket
 import os
 from archive_utils import create_tar, safe_extract_tar, is_archive_name
-from protocol import receive_file, send_file, recv_line, send_line
+from config import KEY
+from protocol import send_file, receive_file, send_encrypted_line, recv_encrypted_line
 
 # Define where files should be saved on the Debian machine
-SAVE_DIR = "/home/iulian/Documents"
+SAVE_DIR = "/home/july/Desktop"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 def start_server(host='0.0.0.0', port=8080):
@@ -59,7 +60,7 @@ def send_file_tree(path, socket):
             items.append(e)
 
     line = '::'.join(items)
-    send_line(socket, line)
+    send_encrypted_line(socket, line, KEY)
 
 
 # Archive helpers moved to `archive_utils.py`
@@ -71,7 +72,7 @@ def send_file_tree(path, socket):
 def handle_client(client_socket):
     """Handle a single client connection supporting upload and navigation/download."""
     # Read initial command
-    cmd = recv_line(client_socket)
+    cmd = recv_encrypted_line(client_socket, KEY)
     if cmd is None:
         return
 
@@ -98,7 +99,7 @@ def handle_client(client_socket):
         send_file_tree(cur_path, client_socket)
 
         while True:
-            line = recv_line(client_socket)
+            line = recv_encrypted_line(client_socket, KEY)
             if line is None:
                 break
             if line == 'QUIT':
@@ -145,7 +146,7 @@ def handle_client(client_socket):
                     continue
                 if os.path.isfile(full):
                     # Use protocol.send_file to send metadata + bytes
-                    send_file(client_socket, full)
+                    send_file(client_socket, full, KEY)
                     # After sending the file, resend the current directory listing
                     send_file_tree(cur_path, client_socket)
                 else:
@@ -170,17 +171,17 @@ def handle_client(client_socket):
                 target = os.path.normpath(target)
                 if not target.startswith(os.path.abspath(SAVE_DIR)) or not os.path.isdir(target):
                     # invalid request
-                    send_line(client_socket, '')
+                    send_encrypted_line(client_socket, '', KEY)
                     send_file_tree(cur_path, client_socket)
                     continue
 
                 # create a temporary tar.gz (use shared helper)
                 try:
                     tmp_name = create_tar(target)
-                    send_file(client_socket, tmp_name)
+                    send_file(client_socket, tmp_name, KEY)
                 except Exception as e:
                     print(f"Error creating/sending tar: {e}")
-                    send_line(client_socket, '')
+                    send_encrypted_line(client_socket, '', KEY)
                 finally:
                     try:
                         if 'tmp_name' in locals():
@@ -200,7 +201,7 @@ def handle_client(client_socket):
                     target_dir = os.path.join(SAVE_DIR, cur_path)
                 target_dir = os.path.normpath(target_dir)
                 if not target_dir.startswith(os.path.abspath(SAVE_DIR)):
-                    send_line(client_socket, '')
+                    send_encrypted_line(client_socket, '', KEY)
                     send_file_tree(cur_path, client_socket)
                     continue
 

@@ -1,91 +1,121 @@
 import os
-
+import struct
+from crypto_lib import encrypt_bytes, decrypt_bytes, get_stream_encryptor, get_stream_decryptor
 BUFFER_SIZE = 8192
 
-
-def send_line(sock, text):
-    """Send a UTF-8 encoded line terminated with '\n'."""
-    if not text.endswith('\n'):
-        text = text + '\n'
-    sock.sendall(text.encode('utf-8'))
-
-
-def recv_line(sock):
-    """Receive bytes until '\n' and return the decoded line without the trailing newline.
-
-    Returns `None` if the connection is closed and no bytes were read.
-    """
+def recv_all(sock, num_bytes):
+    """Helper to cleanly read an exact number of bytes from the socket."""
     data = bytearray()
-    last = None
-    while True:
-        b = sock.recv(1)
-        last = b
-        if not b:
-            break
-        if b == b'\n':
-            break
-        data += b
-    if not data and not last:
-        return None
-    return data.decode('utf-8')
+    while len(data) < num_bytes:
+        packet = sock.recv(num_bytes - len(data))
+        if not packet:
+            return None
+        data.extend(packet)
+    return bytes(data)
 
-def send_file(sock, filepath):
-    """Reads a file and sends it over the socket using the custom protocol."""
+def send_encrypted_line(sock, text, key):
+    """Encrypts text and sends it with a 4-byte length prefix."""
+    # 1. Encrypt the string
+    ciphertext = encrypt_bytes(key, text.encode('utf-8'))
+    # 2. Get the length of the ciphertext and pack it into 4 bytes (!I = Network Byte Order, Unsigned Int)
+    length_prefix = struct.pack('!I', len(ciphertext))
+    # 3. Send length + ciphertext
+    sock.sendall(length_prefix + ciphertext)
+
+
+def recv_encrypted_line(sock, key):
+    """Reads the length prefix, reads the exact ciphertext, and decrypts it."""
+    # 1. Read the 4-byte length
+    raw_length = recv_all(sock, 4)
+    if not raw_length:
+        return None
+    msg_length = struct.unpack('!I', raw_length)[0]
+    
+    # 2. Read exactly 'msg_length' bytes of ciphertext
+    ciphertext = recv_all(sock, msg_length)
+    if not ciphertext:
+        return None
+        
+    # 3. Decrypt and return as string
+    try:
+        plaintext = decrypt_bytes(key, ciphertext)
+        return plaintext.decode('utf-8')
+    except ValueError:
+        print("Decryption failed! Incorrect key or corrupted data.")
+        return None
+
+def send_file(sock, filepath, key):
+    """Encrypts and streams a file over the socket on the fly."""
     filename = os.path.basename(filepath)
     filesize = os.path.getsize(filepath)
 
-    # 1. Construct and send metadata
-    metadata = f"{filename}|{filesize}\n"
-    # sendall() is crucial in Python TCP; it ensures all bytes are sent
-    sock.sendall(metadata.encode('utf-8')) 
+    # 1. Send encrypted metadata (hides the filename and size from network snoopers!)
+    metadata = f"{filename}|{filesize}"
+    send_encrypted_line(sock, metadata, key)
 
-    cnt = 1
-    # 2. Stream the file data in chunks
+    # 2. Set up the AES-GCM cipher
+    nonce, encryptor = get_stream_encryptor(key)
+    
+    # Send the nonce first so the receiver can set up their lock
+    sock.sendall(nonce)
+
+    print(f"Sending encrypted '{filename}'...")
+
+    # 3. Stream and encrypt the file chunks
     with open(filepath, 'rb') as f:
         while True:
             chunk = f.read(BUFFER_SIZE)
             if not chunk:
-                break # End of file
-            print(f"Sending chunk {cnt} of size {len(chunk)} bytes...")
-            sock.sendall(chunk)
-            cnt += 1
+                break 
+            # Use the encryptor object
+            encrypted_chunk = encryptor.encrypt(chunk)
+            sock.sendall(encrypted_chunk)
 
-def receive_file(sock, save_dir):
-    """Reads metadata and file bytes from the socket, saving it to disk."""
-    # 1. Read metadata byte-by-byte until we hit the newline
-    metadata_bytes = bytearray()
-    while True:
-        byte = sock.recv(1)
-        if not byte or byte == b'\n':
-            break
-        metadata_bytes += byte
+    # 4. Send the 16-byte authentication tag at the very end
+    sock.sendall(encryptor.digest())
+    print("Transfer complete.")
 
-    if not metadata_bytes:
+def receive_file(sock, save_dir, key):
+    """Reads, decrypts, and verifies a file streamed over the socket."""
+    # 1. Read the encrypted metadata
+    metadata = recv_encrypted_line(sock, key)
+    if not metadata:
         return None
-
-    # Parse the metadata
-    metadata = metadata_bytes.decode('utf-8')
+        
     filename, filesize_str = metadata.split('|')
     filesize = int(filesize_str)
-
-    print(f"Receiving '{filename}' ({filesize} bytes)...")
-
-    # 2. Read the file data
+    
+    print(f"Receiving encrypted '{filename}' ({filesize} bytes)...")
     filepath = os.path.join(save_dir, filename)
-    bytes_received = 0
 
+    # 2. Read the nonce and set up the AES-GCM decryption cipher
+    nonce = recv_all(sock, 12)
+    if not nonce:
+        return None
+        
+    decryptor = get_stream_decryptor(key, nonce)
+
+    # 3. Stream, decrypt, and save the chunks
+    bytes_received = 0
     with open(filepath, 'wb') as f:
         while bytes_received < filesize:
-            # Only ask for the remaining bytes if we are near the end
             chunk_size = min(BUFFER_SIZE, filesize - bytes_received)
-            chunk = sock.recv(chunk_size)
-            if not chunk:
-                break # Connection dropped prematurely
+            encrypted_chunk = recv_all(sock, chunk_size)
+            if not encrypted_chunk:
+                break 
             
-            f.write(chunk)
-            bytes_received += len(chunk)
+            # Use the decryptor object
+            decrypted_chunk = decryptor.decrypt(encrypted_chunk)
+            f.write(decrypted_chunk)
+            bytes_received += len(encrypted_chunk)
 
-    # Return the path on success; return None on failure
+    # 4. Verify the file's integrity using the tag
     if bytes_received == filesize:
-        return filepath
-    return None
+        tag = recv_all(sock, 16)
+        try:
+            decryptor.verify(tag)
+            return filepath
+        except ValueError:
+            print("File was corrupted or tampered with in transit!")
+            os.remove(filepath)
+            return None
